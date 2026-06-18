@@ -15,6 +15,7 @@ var jw_default = {
     let arquivoRtf = urlParams.get("arquivo");
     const semanaParam = urlParams.get("semana");
     const rawParam = urlParams.get("raw");
+    const formato = urlParams.get("formato");
 
     if (request.method === "POST" && !targetUrl && !arquivoRtf) {
       try {
@@ -104,7 +105,11 @@ var jw_default = {
       );
       
       const finalHtml = normalizeBlankLines(withPerguntas);
-      return new Response(finalHtml, { status: 200, headers: { ...corsHeaders, "Content-Type": "text/html;charset=UTF-8" } });
+      if (formato === "tags") {
+        return new Response(finalHtml, { status: 200, headers: { ...corsHeaders, "Content-Type": "text/html;charset=UTF-8" } });
+      }
+      const fullHtml = btn2(btn1(finalHtml));
+      return new Response(fullHtml, { status: 200, headers: { ...corsHeaders, "Content-Type": "text/html;charset=UTF-8" } });
     } catch (error) {
       return new Response(`Erro no Worker: ${error.message}`, { status: 500, headers: { ...corsHeaders, "Content-Type": "text/plain;charset=UTF-8" } });
     }
@@ -492,6 +497,385 @@ function PROCESSADOR_7(html) {
   return out;
 }
 __name(PROCESSADOR_7, "PROCESSADOR_7");
+
+function btn1(input) {
+  let txt = String(input).trim();
+
+  let estudoId = "";
+  let corHex = "";
+
+  const idMatch = txt.match(/^(\d+)/);
+  if (idMatch) {
+    estudoId = idMatch[1];
+    txt = txt.replace(estudoId, "").trim();
+  }
+
+  const hexMatch = txt.match(/(#[0-9a-fA-F]{3,6})/);
+  if (hexMatch) {
+    corHex = hexMatch[1];
+    txt = txt.replace(corHex, "").trim();
+  }
+
+  txt = txt.replace(/<\/strong>(\s*)<bbl>([\s\S]*?)<\/bbl>(\s*)<strong>/gi, "$1<bbl>$2</bbl>$3");
+  txt = txt.replace(/<\/em>(\s*)<bbl>([\s\S]*?)<\/bbl>(\s*)<em>/gi, "$1<bbl>$2</bbl>$3");
+
+  txt = txt.replace(/;\s*<\/bbl>\s*<bbl>(?=[A-Za-zÀ-ÖØ-öø-ÿ])/gi, "</bbl>; <bbl>");
+  txt = txt.replace(/;\s*<\/bbl>\s*<bbl>(?=\d)/gi, "; ");
+  txt = txt.replace(/<\/bbl>;\s*<bbl>(?=\d)/gi, "; ");
+  txt = txt.replace(/<\/bbl>\s*<bbl>(?=\d)/gi, " ");
+  
+  txt = txt.replace(/<bbl>([\s\S]*?)<\/bbl>/gi, '<a class="bbl">$1</a>');
+
+  let estudoConteudo = "";
+  txt = txt.replace(/<estudo>([\s\S]*?)<\/estudo>/i, (_, content) => {
+    estudoConteudo = content.trim().replace(/(\d+)\s*-\s*(\d+)/, "$1 A $2");
+    return "";
+  });
+
+  let preArticle = "";
+  txt = txt.replace(/<cantico>([\s\S]*?)<\/cantico>/i, (_, content) => {
+    const m = content.trim().match(/^(C[ÂA]NTICO\s+\d+)\s+(.+)/i);
+    if (m) {
+      const num = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+      preArticle += `<div class="secao-cantico"><p><span class="cantico">${num}</span> <span class="cantico-titulo">${m[2].trim()}</span></p></div>\n\n`;
+    }
+    return "";
+  });
+
+  txt = txt.replace(/<tema>([\s\S]*?)<\/tema>/i, (_, content) => {
+    preArticle += `<h1 class="estudo-titulo">\n${content.trim()}\n</h1>\n\n`;
+    return "";
+  });
+
+  txt = txt.replace(/<citacao>([\s\S]*?)<\/citacao>/i, (_, content) => {
+    preArticle += `<p class="citacao">\n${content.trim()}\n</p>\n\n`;
+    return "";
+  });
+
+  txt = txt.replace(/<objetivo>([\s\S]*?)<\/objetivo>/i, (_, content) => {
+    const t = content.trim().replace(/^OBJETIVO\s*/i, "");
+    preArticle += `<div class="objetivo"><p class="objetivo-titulo">OBJETIVO</p><p class="objetivo-texto">${t}</p></div>\n\n`;
+    return "";
+  });
+
+  let descricoesImagem =[];
+  txt = txt.replace(/<nota>\s*\*\s*<strong>DESCRIÇÃO DA IMAGEM:<\/strong>\s*([\s\S]*?)<\/nota>/gi, (_, desc) => {
+    descricoesImagem.push(desc.trim());
+    return ""; 
+  });
+
+  let descCount = 0;
+  txt = txt.replace(/<figure>([\s\S]*?)<\/figure>/gi, (m, inner) => {
+    let hasAsterisk = /\*/.test(inner);
+    
+    inner = inner.replace(/<img\s+src=(["'])(.*?_lg\.jpg)\1/i, (imgM, q, src) => {
+      let newSrc = src.replace("_lg.jpg", "_xl.jpg");
+      if (hasAsterisk && descCount < descricoesImagem.length) {
+        let altTxt = descricoesImagem[descCount];
+        return `<img src="${newSrc}"\n       alt="${altTxt}"`;
+      }
+      return `<img src="${newSrc}"`;
+    });
+
+    if (hasAsterisk) {
+      descCount++;
+      inner = inner.replace(/\s*\(\s*Veja\s+o\s+parágrafo[^)]+\)\s*\*/gi, "");
+      inner = inner.replace(/\s*\*/g, "");
+    }
+
+    return `<figure>\n${inner.trim()}\n</figure>`;
+  });
+
+  txt = txt.replace(/<subtitulo>([\s\S]*?)<\/subtitulo>/gi, (_, content) => {
+    let str = content.trim();
+    str = str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+    return `<h2 class="subtitulo">${str}</h2>\n\n`;
+  });
+
+  txt = txt.replace(/<pergunta>([\s\S]*?)<\/pergunta>/gi, (_, content) => {
+    const m = content.trim().match(/^(\d+(?:\s*[-–]\s*\d+)?)(?:\.)?\s*(.*)$/);
+    if (m) return `<div><p class="pergunta"><span>${m[1].replace(/\s+/g, "")}.</span> ${m[2].trim()}</p></div>\n\n`;
+    return `<div><p class="pergunta">${content.trim()}</p></div>\n\n`;
+  });
+
+  txt = txt.replace(/<paragrafo>([\s\S]*?)<\/paragrafo>/gi, (_, content) => {
+    const m = content.trim().match(/^(\d+)\s+([\s\S]*)$/);
+    if (m) return `<p class="paragrafo"><span>${m[1]}</span> ${m[2].trim()}</p>\n\n`;
+    return `<p class="paragrafo">${content.trim()}</p>\n\n`;
+  });
+
+  txt = txt.replace(/<recap>([\s\S]*?)<\/recap>/gi, (_, content) => {
+    const rawLines = content.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (!rawLines.length) return "";
+    
+    const titulo = rawLines[0];
+    let lis = "";
+    for(let i = 1; i < rawLines.length; i++) {
+       let item = rawLines[i].replace(/^[•\-\u2022]\s*/, "");
+       lis += `          <li>${item}</li>\n`;
+    }
+    return `<div class="secao-recapitulacao">\n  <hr class="linha-recapitulacao">\n  <h3 class="titulo-recapitulacao">${titulo}</h3>\n  <ul class="lista-recapitulacao">\n${lis}  </ul>\n</div>\n\n`;
+  });
+
+  txt = txt.replace(/<cantico>([\s\S]*?)<\/cantico>/gi, (_, content) => {
+    const m = content.trim().match(/^(C[ÂA]NTICO\s+\d+)\s+(.+)/i);
+    if (m) {
+      const num = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+      return `<div class="secao-cantico"><p><span class="cantico">${num}</span> <span class="cantico-titulo">${m[2].trim()}</span></p></div>\n\n<hr class="linha-divisoria">\n\n`;
+    }
+    return "";
+  });
+
+  txt = txt.replace(/<quadro>([\s\S]*?)<\/quadro>/gi, (_, content) => {
+    const lines = content.trim().split(/\n\n+/);
+    if (lines.length === 0) return "";
+    
+    const titulo = lines.shift().trim();
+    let htmlCorpo = "";
+    let inList = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) continue;
+      
+      if (line.startsWith("•")) {
+        if (!inList) { htmlCorpo += `<ul class="quadro1-lista">\n`; inList = true; }
+        htmlCorpo += `    <li>${line.substring(1).trim()}</li>\n`;
+      } else {
+        if (inList) { htmlCorpo += `</ul>\n\n`; inList = false; }
+        htmlCorpo += `<p>${line}</p>\n\n`;
+      }
+    }
+    if (inList) htmlCorpo += `</ul>\n\n`;
+
+    return `<div class="quadro1">\n  <h3 class="quadro1-titulo">${titulo}</h3>\n  <div class="quadro1-corpo">\n${htmlCorpo.trimEnd()}\n  </div>\n</div>\n\n`;
+  });
+
+  txt = txt.replace(/<nota>\s*\*?\s*([\s\S]*?)<\/nota>/gi, (_, content) => {
+    return `<p class="nota-rodape"><span class="simbolo-rodape">*</span> ${content.trim()}</p>\n\n`;
+  });
+
+  txt = txt.replace(/\n{3,}/g, "\n\n");
+
+  const headerHtml = `<div class="container">\n\n<header class="barra-estudo">\n<div>${estudoConteudo}</div>\n</header>\n\n<main>\n\n${preArticle}${txt.trim()}\n\n</main>\n\n</div>\n\n${estudoId}\n\n${corHex}`;
+
+  return headerHtml;
+}
+__name(btn1, "btn1");
+
+function btn2(input) {
+  let txt = String(input).trim();
+
+  const tailMetaMatch = txt.match(/(?:\n\s*(\d{6,8}))?(?:\n\s*(#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})))?\s*$/);
+  const estudoId = tailMetaMatch?.[1] || "";
+  const corHex = tailMetaMatch?.[2] || "";
+
+  txt = txt.replace(/(?:\n\s*\d{6,8})?(?:\n\s*#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3}))?\s*$/, "").trim();
+
+  const headerTxtMatch = txt.match(/<header class="barra-estudo">\s*<div>([\s\S]*?)<\/div>\s*<\/header>/i);
+  const headerTxt = headerTxtMatch ? headerTxtMatch[1].replace(/\s+/g, " ").trim() : "";
+
+  const meses = {
+    "JANEIRO": "01", "FEVEREIRO": "02", "MARÇO": "03", "MARCO": "03",
+    "ABRIL": "04", "MAIO": "05", "JUNHO": "06", "JULHO": "07",
+    "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12"
+  };
+
+  let semanaDDMM = "";
+  if (headerTxt) {
+    const up = headerTxt.toUpperCase();
+    let d = "";
+    let mesNome = "";
+    
+    let m = up.match(/^(\d{1,2})\s+DE\s+([A-ZÇÃÕ]+)\s*[-–—A]\s*\d{1,2}\s+DE\s+[A-ZÇÃÕ]+\s+DE\s+\d{4}$/i);
+    if (m) {
+      d = m[1];
+      mesNome = m[2];
+    } else {
+      m = up.match(/^(\d{1,2})\s+A\s+\d{1,2}\s+DE\s+([A-ZÇÃÕ]+)\s+DE\s+\d{4}$/i);
+      if (m) {
+        d = m[1];
+        mesNome = m[2];
+      } else {
+        m = up.match(/^(\d{1,2})\s+DE\s+([A-ZÇÃÕ]+)\s+DE\s+\d{4}$/i);
+        if (m) {
+          d = m[1];
+          mesNome = m[2];
+        }
+      }
+    }
+    
+    const mm = meses[mesNome] || "";
+    if (d && mm) semanaDDMM = `${String(d).padStart(2, "0")}-${mm}`;
+  }
+
+  const TOPO = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="X">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>A Sentinela</title>
+
+    <meta name="color-scheme" content="light dark">
+    <script>
+    (function() {
+      try {
+        var savedTheme = localStorage.getItem('tema-interface') || 'system';
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var isDark = savedTheme === 'dark' || (savedTheme === 'system' && prefersDark);
+        document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+      } catch (e) {}
+    })();
+    </script>
+    <style>
+      html, body { background: #f3f4f6; }
+      html[data-theme="dark"], html[data-theme="dark"] body { background: #000000; }
+    </style>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Noto+Sans:wght@400;700;800&family=Noto+Serif:ital@1&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="../biblia/stylebbl.css">
+    <link rel="stylesheet" href="../clickable/clickable.css">
+    <link rel="stylesheet" href="../menu/menu.css">
+    <link rel="stylesheet" href="../clickable/agente-modal/agente-modal.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Swiper/11.0.5/swiper-bundle.min.css">
+    <link rel="stylesheet" href="../imagem/swiper-zoom.css">
+    <link rel="stylesheet" href="../../navbar/navbar-unified.css">
+</head>
+<body data-estudo="X" style="--cor-principal-estudo: X;" class="with-bottom-navbar">
+<script>
+  (function() {
+    try {
+      var color = getComputedStyle(document.body).getPropertyValue('--cor-principal-estudo').trim() || 'X';
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', color);
+    } catch (e) {}
+  })();
+</script>
+
+<nav class="bottom-navbar booting" data-context="navbar-context-watchtower">
+    <a href="#" class="navbar-item" data-page="home" onclick="irParaHome(event)">
+        <div class="navbar-icon icon-home"></div>
+        <span class="navbar-label">Início</span>
+    </a>
+    <a href="#" class="navbar-item" data-page="bible" onclick="irParaBiblia(event)">
+        <div class="navbar-icon icon-bible"></div>
+        <span class="navbar-label">Bíblia</span>
+    </a>
+    <a href="#" class="navbar-item" data-page="notes" onclick="irParaAnotacoes(event)">
+        <div class="navbar-icon icon-notes"></div>
+        <span class="navbar-label">Anotações</span>
+    </a>
+    <a href="#" class="navbar-item active" data-page="watchtower" onclick="irParaSentinela(event)">
+        <div class="navbar-icon icon-watchtower"></div>
+        <span class="navbar-label">A Sentinela</span>
+    </a>
+    <a href="#" class="navbar-item" data-page="save" onclick="irParaSalvar(event)">
+        <div class="navbar-icon icon-save"></div>
+        <span class="navbar-label">Salvar</span>
+    </a>
+</nav>
+
+<script>
+  const urlParams = new URLSearchParams(window.location.search);
+  window.semanaAtual = urlParams.get('semana') || 'X-X';
+  window.estudoId = 'X';
+</script>`;
+
+  const RODAPE = `<div id="modal-biblia">
+    <div class="modal-biblia-content">
+        <span id="modal-biblia-fechar">×</span>
+        <div id="modal-biblia-corpo"></div>
+    </div>
+</div>
+
+<script src="../biblia/abrev.js"></script>
+<script src="../biblia/scriptbbl.js"></script>
+<script src="../clickable/cache.js"></script>
+<script src="../clickable/agente_perguntas.js"></script>
+<script src="../clickable/agente_recap.js"></script>
+<script src="../clickable/agente-obj.js"></script>
+<script src="../clickable/agente-sub.js"></script>
+<script src="../clickable/agente-modal/agente-modal.js"></script>
+<script src="../clickable/clickable.js"></script>
+<script src="../menu/menu.js"></script>
+<script src="../mark.js"></script>
+<script src="../imagem/semanas/22-09/ilust/ilust-universal.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Swiper/11.0.5/swiper-bundle.min.js"></script>
+
+<script src="../imagem/swiper-zoom.js"></script>
+<script src="../imagem.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../../save/config.js"></script>
+<script src="../../save/supabase.js"></script>
+<script src="../../navbar/navbar-unified.js"></script>
+<script src="../../save/sentinela-sync.js"></script>
+
+<div id="zoom-container" class="zoom-container">
+    <div class="zoom-header">
+        <button class="zoom-btn-fechar" aria-label="Fechar">×</button>
+    </div>
+    <div class="zoom-content"></div>
+    <div class="zoom-footer"></div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        document.querySelectorAll('.paragrafo').forEach((p, index) => {
+            if (!p.id) p.id = \`paragrafo-sentinela-\${index + 1}\`;
+        });
+        if (window.CacheAnotacao) {
+            document.querySelectorAll('.paragrafo, .comentarios, .clickable').forEach(el => {
+                if (el.id) {
+                    const cachedContent = window.CacheAnotacao.carregar(el.id);
+                    if (cachedContent) el.innerHTML = cachedContent;
+                }
+            });
+        }
+        document.dispatchEvent(new CustomEvent('cacheRestored'));
+        if (window.UnifiedNavbar?.get()) {
+            window.UnifiedNavbar.get().setActivePage('watchtower');
+        }
+    }, 200);
+});
+</script>
+
+</body>
+</html>`;
+
+  const jaTemTopo = /^<!DOCTYPE html>/i.test(txt.trimStart());
+  const jaTemRodape = /id="modal-biblia"/i.test(txt);
+
+  if (!jaTemTopo) txt = `${TOPO}\n\n${txt.trimStart()}`;
+
+  if (corHex) {
+    txt = txt.replace(/--cor-principal-estudo:\s*X(\s*;)?/g, `--cor-principal-estudo: ${corHex};`);
+    txt = txt.replace(/<meta name="theme-color" content="X">/g, `<meta name="theme-color" content="${corHex}">`);
+  }
+  if (estudoId) txt = txt.replace(/window\.estudoId\s*=\s*'X'\s*;/g, `window.estudoId = '${estudoId}';`);
+  
+  if (semanaDDMM) {
+    txt = txt.replace(/<body([^>]*?)\bdata-estudo="X"([^>]*?)>/i, `<body$1 data-estudo="${semanaDDMM}"$2>`);
+    txt = txt.replace(/window\.semanaAtual\s*=\s*urlParams\.get\('semana'\)\s*\|\|\s*'X-X'\s*;/g, `window.semanaAtual = urlParams.get('semana') || '${semanaDDMM}';`);
+  }
+
+  if (!jaTemRodape) {
+    if (/<\/main>\s*<\/div>\s*$/i.test(txt)) txt = txt.replace(/<\/main>\s*<\/div>\s*$/i, (m) => `${m}\n\n${RODAPE}`);
+    else if (/<\/div>\s*$/i.test(txt)) txt = txt.replace(/<\/div>\s*$/i, (m) => `${m}\n\n${RODAPE}`);
+    else txt = `${txt.trimEnd()}\n\n${RODAPE}`;
+  }
+
+  return txt.trimEnd();
+}
+__name(btn2, "btn2");
 
 export {
   jw_default as default
