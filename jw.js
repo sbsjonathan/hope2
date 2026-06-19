@@ -60,7 +60,12 @@ var jw_default = {
         const artHtml = await artResp.text();
         const titulo = extrairTitulo(artHtml);
         if (!titulo) return new Response(JSON.stringify({ error: "titulo_nao_encontrado" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
-        return new Response(JSON.stringify({ titulo, docId: resolvido.docId || "" }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
+        const imagem = extrairImagem(artHtml);
+        let cor = "";
+        const tokenMatch = artHtml.match(/\bdu-bgColor--([a-z0-9-]+)\b/i);
+        if (tokenMatch) cor = await fetchHexFromCss(artHtml, artResp.url, tokenMatch[0], robustHeaders);
+        if (!cor || !/^#[0-9a-fA-F]{3,6}$/.test(cor)) cor = "";
+        return new Response(JSON.stringify({ titulo, imagem, cor, docId: resolvido.docId || "" }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
       }
@@ -221,6 +226,13 @@ function extrairTitulo(html) {
   return stripTags(h1[0]).replace(/\s+/g, " ").trim();
 }
 __name(extrairTitulo, "extrairTitulo");
+
+function extrairImagem(html) {
+  let m = html.match(/<meta\b[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i);
+  if (!m) m = html.match(/<meta\b[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+  return m ? m[1].trim() : "";
+}
+__name(extrairImagem, "extrairImagem");
 
 async function fetchHexFromCss(html, baseUrl, tokenClass, robustHeaders) {
   try {
