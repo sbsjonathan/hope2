@@ -16,6 +16,7 @@ var jw_default = {
     const semanaParam = urlParams.get("semana");
     const rawParam = urlParams.get("raw");
     const formato = urlParams.get("formato");
+    const tituloParam = urlParams.get("titulo");
 
     if (request.method === "POST" && !targetUrl && !arquivoRtf) {
       try {
@@ -47,6 +48,21 @@ var jw_default = {
         return new Response(body, { status: r.status, headers: { ...corsHeaders, "Content-Type": r.headers.get("content-type") || "text/html;charset=UTF-8" } });
       } catch (e) {
         return new Response(`Erro no passthrough: ${e.message}`, { status: 502, headers: corsHeaders });
+      }
+    }
+
+    if (tituloParam) {
+      try {
+        const resolvido = await resolverSemana(tituloParam, robustHeaders);
+        if (!resolvido.url) return new Response(JSON.stringify({ error: resolvido.error || "nao_resolvido" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
+        const artResp = await fetch(resolvido.url, { method: "GET", headers: robustHeaders, redirect: "follow" });
+        if (!artResp.ok) return new Response(JSON.stringify({ error: `artigo ${artResp.status}` }), { status: artResp.status, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
+        const artHtml = await artResp.text();
+        const titulo = extrairTitulo(artHtml);
+        if (!titulo) return new Response(JSON.stringify({ error: "titulo_nao_encontrado" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
+        return new Response(JSON.stringify({ titulo, docId: resolvido.docId || "" }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8" } });
       }
     }
 
@@ -197,6 +213,14 @@ async function resolverSemana(semanaStr, robustHeaders) {
   return { url: `https://www.jw.org/finder?wtlocale=T&docid=${docId}&prefer=content`, docId };
 }
 __name(resolverSemana, "resolverSemana");
+
+function extrairTitulo(html) {
+  const onlyArticle = keepOnlyArticle(html);
+  const h1 = onlyArticle.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/i);
+  if (!h1) return "";
+  return stripTags(h1[0]).replace(/\s+/g, " ").trim();
+}
+__name(extrairTitulo, "extrairTitulo");
 
 async function fetchHexFromCss(html, baseUrl, tokenClass, robustHeaders) {
   try {
